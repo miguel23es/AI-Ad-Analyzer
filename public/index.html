@@ -15,8 +15,14 @@
     </header>
 
     <section class="card">
-      <h2 class="section-title">1. Your Ad</h2>
-
+      <h2 class="section-title">Choose either text or image mode and the goal for your ad!</h2>
+      <div id="modeToggleContainer" style="margin-bottom:15px; display:flex; align-items:center; gap:10px;">
+        <label class="switch">
+          <input type="checkbox" id="modeToggle">
+          <span class="slider"></span>
+        </label>
+        <span id="modeLabel" style="margin-left:10px; font-weight:bold;">Text Mode</span>
+      </div>
       <label class="input-label" for="adText">Ad text</label>
       <textarea id="adText" class="text-input" rows="6" placeholder="Example: Save 25% today on our award-winning plan. Trusted by 10,000+ happy customers. Start your free trial now."></textarea>
 
@@ -26,6 +32,19 @@
         <option value="clicks">Clicks / Traffic</option>
         <option value="conversions">Conversions / Sales</option>
       </select>
+
+      <div class="upload-block">
+          <p class="input-label">Ad image (optional)</p>
+          <p class="hint-text">Upload the ad creative image you’re using so we can review visuals later.</p>
+
+          <input type="file" id="imageInput" accept="image/*"/>
+          <p id="modeNote" style="font-size:0.9rem; color:#888; margin-top:5px;"></p>
+
+          <div id="imagePreviewWrapper" class="image-preview-wrapper" style="display:none;">
+            <p class="hint-text" style="margin-top: 0.5rem;">Preview</p>
+            <img id="imagePreview" class="image-preview" alt="Ad image preview" />
+          </div>
+      </div>
 
       <button id="analyzeBtn" class="analyze-btn">Analyze Ad</button>
 

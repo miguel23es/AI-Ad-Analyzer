@@ -2,6 +2,9 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import multer from "multer";
+const upload = multer({ storage: multer.memoryStorage() });
+
 // 2) Imports (ESM-style)
 import express from "express";
 import cors from "cors";
@@ -46,6 +49,29 @@ function interpretScore(score) {
     return "average and needs important improvements before running paid spend";
   return "weak and not aligned with the goal yet";
 }
+
+import Tesseract from "tesseract.js";
+
+async function extractTextFromImage(imageBuffer) {
+  console.log("🟩 Running Tesseract OCR...");
+
+  try {
+    const { data: { text } } = await Tesseract.recognize(
+      imageBuffer,
+      'eng',
+      {
+        logger: m => console.log("📘 OCR Progress:", m)
+      }
+    );
+
+    console.log("🟩 OCR RESULT:", text);
+    return text;
+  } catch (err) {
+    console.error("🔥 Tesseract OCR Error:", err);
+    return "";
+  }
+}
+
 
 /*
 ====================================================
@@ -390,16 +416,12 @@ function generateFeedbackAwareness(result) {
   return tips;
 }
 
-/*
-====================================================
-IMAGE ANALYSIS (goal + imgSignals)
-imgSignals = {
-  hasPerson: boolean,
-  hasProduct: boolean,
-  hasOfferText: boolean
-}
-====================================================
-*/
+const imgSignals = {
+  hasPerson: false,
+  hasProduct: false,
+  hasOfferText: false
+};
+
 
 function analyzeImageForGoal(goal, imgSignals = {}) {
   const { hasPerson, hasProduct, hasOfferText } = imgSignals || {};
@@ -509,94 +531,94 @@ app.get("/", (req, res) => {
 });
 
 // IMPORTANT: this route is async because we call the LLM
-app.post("/analyzeAd", async (req, res) => {
-  const { adText, goal, imgSignals } = req.body;
-
-  if (!adText || !goal) {
-    return res.status(400).json({
-      error: "Please provide adText and goal",
-    });
-  }
-
-  // pick scoring logic for this goal
-  let result;
-  let suggestions;
-
-  if (goal === "clicks") {
-    result = scoreForClicks(adText);
-    suggestions = generateFeedbackClicks(result);
-  } else if (goal === "conversions") {
-    result = scoreForConversions(adText);
-    suggestions = generateFeedbackConversions(result);
-  } else if (goal === "awareness") {
-    result = scoreForAwareness(adText);
-    suggestions = generateFeedbackAwareness(result);
-  } else {
-    return res.json({
-      goalAnalyzed: goal,
-      message:
-        "Goal not implemented. Use 'clicks', 'conversions', or 'awareness'.",
-      score: null,
-      breakdown: null,
-      aiSummary: null,
-      rewrite: null,
-      imageAdvice: null,
-      suggestions: [],
-    });
-  }
-
-  // generate image feedback (purely local logic)
-  const imageAdvice = analyzeImageForGoal(goal, imgSignals);
-
-  // call LLM for aiSummary + rewrite
-  let llmSummary = {
-    aiSummary:
-      "AI summary unavailable. (Model call failed or not configured.)",
-    rewrite: ""
-  };
-
+app.post("/analyzeAd", upload.single("imageFile"), async (req, res, next) => {
   try {
-    llmSummary = await generateLLMAnalysis({
-      adText,
+    console.log("🟦 Received request");
+    console.log("body:", req.body);
+    console.log("file:", req.file);
+
+    console.log("🟩 Checking if OCR will run...");
+    console.log("req.file exists?", !!req.file);
+
+    // 1️⃣ Extract OCR text FIRST
+    let ocrText = "";
+    if (req.file) {
+      console.log("🟩 Starting OCR...");
+      try {
+        ocrText = await extractTextFromImage(
+        req.file.buffer,
+        req.file.mimetype,
+        req.file.originalname     // <-- send filename too
+      );
+
+        console.log("🟩 OCR TEXT RESULT:", ocrText);
+      } catch (err) {
+        console.error("🔥 OCR ERROR:", err);
+      }
+    }
+
+    // 2️⃣ Merge user input + OCR text
+    const adText = req.body.adText || "";
+    const fullAdText = `${adText} ${ocrText}`.trim();
+
+    console.log("🟩 FULL AD TEXT FOR ANALYSIS:", fullAdText);
+
+    const goal = req.body.goal;
+
+    // 3️⃣ Run your scoring engines using fullAdText
+    let result;
+    let suggestions;
+
+    if (goal === "clicks") {
+      result = scoreForClicks(fullAdText);
+      suggestions = generateFeedbackClicks(result);
+    } else if (goal === "conversions") {
+      result = scoreForConversions(fullAdText);
+      suggestions = generateFeedbackConversions(result);
+    } else if (goal === "awareness") {
+      result = scoreForAwareness(fullAdText);
+      suggestions = generateFeedbackAwareness(result);
+    } else {
+      return res.json({ error: "Invalid goal" });
+    }
+
+    // 4️⃣ Call the LLM using fullAdText
+    let llmSummary = await generateLLMAnalysis({
+      adText: fullAdText,
       goal,
       score: result.finalScore,
-      breakdown: result.breakdown,
+      breakdown: result.breakdown
     });
+
+    // 5️⃣ Respond
+    res.json({
+      goalAnalyzed: goal,
+      score: result.finalScore,
+      breakdown: result.breakdown,
+      aiSummary: llmSummary.aiSummary,
+      rewrite: llmSummary.rewrite,
+      ocrText,
+      suggestions
+    });
+
   } catch (err) {
-    console.error("LLM error:", err);
+    next(err);
   }
-
-  // NEW: if the LLM gave us a rewrite, rescore it with the SAME goal
-  let improvedScore = null;
-  if (llmSummary.rewrite && llmSummary.rewrite.trim().length > 0) {
-    if (goal === "clicks") {
-      improvedScore = scoreForClicks(llmSummary.rewrite).finalScore;
-    } else if (goal === "conversions") {
-      improvedScore = scoreForConversions(llmSummary.rewrite).finalScore;
-    } else if (goal === "awareness") {
-      improvedScore = scoreForAwareness(llmSummary.rewrite).finalScore;
-    }
-  }
-
-  // final response to frontend
-  return res.json({
-    goalAnalyzed: goal,
-    score: result.finalScore,            // original ad score
-    improvedScore,                      // NEW: AI version score
-    breakdown: result.breakdown,
-    aiSummary: llmSummary.aiSummary,
-    rewrite: llmSummary.rewrite,
-    imageAdvice,
-    suggestions,
-  });
-
 });
+
 
 /*
 ====================================================
 START SERVER
 ====================================================
 */
+
+// GLOBAL ERROR HANDLER
+app.use((err, req, res, next) => {
+  console.error("🔥 SERVER ERROR:", err.stack);
+  res.status(500).json({ error: "Internal Server Error", details: err.message });
+});
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

@@ -10,31 +10,94 @@ const aiSummaryText = document.getElementById("aiSummaryText");
 const breakdownList = document.getElementById("breakdownList");
 const suggestionsList = document.getElementById("suggestionsList");
 
-const rewriteText = document.getElementById("rewriteText");
+const imageInput = document.getElementById("imageInput");
+const imagePreviewWrapper = document.getElementById("imagePreviewWrapper");
+const imagePreview = document.getElementById("imagePreview");
 
+const modeToggle = document.getElementById("modeToggle");
+const modeLabel = document.getElementById("modeLabel");
+
+// Initial state = Text mode
+setTextMode(true);
+
+modeToggle.addEventListener("change", () => {
+  if (modeToggle.checked) {
+    // Image Mode
+    setImageMode(true);
+  } else {
+    // Text Mode
+    setTextMode(true);
+  }
+});
+
+function setTextMode(active) {
+  if (!active) return;
+
+  modeLabel.textContent = "Text Mode";
+
+  adTextInput.disabled = false;
+  adTextInput.style.opacity = "1";
+
+  imageInput.disabled = true;
+  imageInput.value = "";
+  imageInput.style.opacity = "0.4";
+}
+
+function setImageMode(active) {
+  if (!active) return;
+
+  modeLabel.textContent = "Image Mode";
+
+  adTextInput.disabled = true;
+  adTextInput.value = "";
+  adTextInput.style.opacity = "0.4";
+
+  imageInput.disabled = false;
+  imageInput.style.opacity = "1";
+}
+
+// we'll store the currently selected file here for later
+let selectedImageFile = null;
+
+const rewriteText = document.getElementById("rewriteText");
 analyzeBtn.addEventListener("click", async () => {
   const adText = adTextInput.value.trim();
+  const file = imageInput.files[0];
   const goal = goalSelect.value;
 
-  // basic validation
-  if (!adText) {
-    showError("Please paste some ad text first.");
-    return;
+  // Mode check
+  if (!modeToggle.checked) {
+    // TEXT MODE
+    if (!adText) {
+      showError("Please enter ad text.");
+      return;
+    }
+  } else {
+    // IMAGE MODE
+    if (!file) {
+      showError("Please upload an image.");
+      return;
+    }
   }
 
   hideError();
 
   try {
-    // send request to backend
+    const formData = new FormData();
+    formData.append("goal", goal);
+
+    // Add correct field based on mode
+    if (!modeToggle.checked) {
+      // TEXT mode
+      formData.append("adText", adText);
+    } else {
+      // IMAGE mode
+      formData.append("imageFile", file);
+    }
+
     const response = await fetch("/analyzeAd", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        adText,
-        goal
-      })
+      body: formData
     });
 
     if (!response.ok) {
@@ -44,20 +107,20 @@ analyzeBtn.addEventListener("click", async () => {
 
     const data = await response.json();
 
-    // if backend returns error format
     if (data.error) {
       showError(data.error);
       return;
     }
 
-    // fill UI with response
     renderResults(data);
 
   } catch (err) {
     console.error(err);
-    showError("Could not connect to backend at http://localhost:3000");
+    showError("Could not connect to backend.");
   }
 });
+
+
 
 function renderResults(data) {
   // unhide results card
@@ -126,3 +189,35 @@ function showError(msg) {
 function hideError() {
   errorMsg.style.display = "none";
 }
+
+// Image logic
+imageInput.addEventListener("change", () => {
+  const file = imageInput.files[0];
+
+  if (!file) {
+    selectedImageFile = null;
+    imagePreviewWrapper.style.display = "none";
+    imagePreview.src = "";
+    return;
+  }
+
+  // basic guard: only images
+  if (!file.type.startsWith("image/")) {
+    alert("Please upload an image file (PNG, JPG, etc.).");
+    imageInput.value = "";
+    selectedImageFile = null;
+    imagePreviewWrapper.style.display = "none";
+    imagePreview.src = "";
+    return;
+  }
+
+  selectedImageFile = file;
+
+  // show preview
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    imagePreview.src = e.target.result;
+    imagePreviewWrapper.style.display = "block";
+  };
+  reader.readAsDataURL(file);
+});
