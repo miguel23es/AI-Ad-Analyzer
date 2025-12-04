@@ -42,13 +42,6 @@ HELPERS
 ====================================================
 */
 
-function interpretScore(score) {
-  if (score >= 80) return "strong and close to ready to run";
-  if (score >= 60) return "decent but still missing key elements";
-  if (score >= 40)
-    return "average and needs important improvements before running paid spend";
-  return "weak and not aligned with the goal yet";
-}
 
 import Tesseract from "tesseract.js";
 
@@ -72,7 +65,6 @@ async function extractTextFromImage(imageBuffer) {
   }
 }
 
-
 /*
 ====================================================
 CLICK GOAL ("clicks")
@@ -80,60 +72,127 @@ Drive traffic / get people to tap
 ====================================================
 */
 
+// Shared helpers for more generous scoring
+function generousNormalize(raw) {
+  // 0 -> 0, 1 -> 70, 2 -> 90, 3+ -> 100
+  if (raw <= 0) return 0;
+  if (raw === 1) return 70;
+  if (raw === 2) return 90;
+  return 100;
+}
+
+function dimensionBonus(nonZeroDims) {
+  // Small bonus for hitting multiple angles
+  if (nonZeroDims >= 3) return 12; // very well-rounded
+  if (nonZeroDims === 2) return 8; // solid
+  if (nonZeroDims === 1) return 4; // at least one strong angle
+  return 0;
+}
+
+function clampScore(score) {
+  if (score < 0) return 0;
+  if (score > 100) return 100;
+  return Math.round(score);
+}
+
+
 function scoreForClicks(adText) {
   const text = adText.toLowerCase();
 
-  const ctaWords = [
-    "click",
-    "tap",
-    "learn more",
-    "sign up",
-    "get started",
-    "try it",
+  const CTA_WORDS = [
+    // Direct actions
+    "click", "tap", "press", "hit the button",
+    "learn more", "find out more", "see how", "check it out",
+    "discover", "explore", "read more",
+
+    // Signup / join
+    "sign up", "signup", "register", "join now", "join today",
+    "create your account", "get access", "get instant access",
+
+    // Start / try
+    "get started", "start now", "start today",
+    "try it", "try it now", "try for free", "start free",
+    "start your free trial", "free trial",
+
+    // Buying / booking
+    "shop now", "buy now", "purchase now", "order now",
+    "add to cart", "grab yours", "claim yours",
+    "book now", "reserve now", "reserve your spot",
+
+    // Download
+    "download", "download now", "get the app", "install now",
   ];
 
-  const urgencyWords = [
-    "now",
-    "today",
-    "limited time",
-    "last chance",
-    "ends tonight",
-    "don't miss",
+  const URGENCY_PATTERNS = [
+    "limited time", "last chance", "ending soon", "ends today",
+    "ends tonight", "today only", "only today",
+    "while supplies last", "before it's gone",
+    "don't miss out", "hurry", "act now",
+
+    // Regex (softer, more flexible)
+    /only\s+(today|tonight|this week|for a limited time)/i,
+    /ends?\s+(today|tonight|soon|this week)/i,
+    /hurry|act now|don'?t wait/i,
+    /(few|limited)\s+(spots|units|items|left)/i,
+    /before\s+(it'?s|its)\s+gone/i,
   ];
 
-  const curiosityWords = [
-    "secret",
-    "you won't believe",
-    "what no one tells you",
-    "nobody talks about",
-    "they don't want you to know",
+  const CURIOSITY_PATTERNS = [
+    "secret", "secrets revealed",
+    "you won't believe", "what no one tells you",
+    "nobody talks about", "they don't want you to know",
+    "the truth about", "the real reason",
+    "hidden", "revealed", "exposed",
+    "discover how", "find out why",
+
+    // Regex curiosity hooks
+    /you\s+won'?t\s+believe/i,
+    /the\s+truth\s+about/i,
+    /what\s+(no one|nobody)\s+(tells|talks)\s+you/i,
+    /this\s+is\s+why/i,
+    /how\s+to\s+\w+/i,
   ];
 
-  function countHits(list) {
-    return list.reduce((count, phrase) => {
-      if (text.includes(phrase)) {
-        return count + 1;
-      }
-      return count;
-    }, 0);
+
+function countHits(patterns, text) {
+  return patterns.reduce((count, item) => {
+    if (typeof item === "string") {
+      return text.includes(item) ? count + 1 : count;
+    }
+    if (item instanceof RegExp) {
+      return item.test(text) ? count + 1 : count;
+    }
+    return count;
+  }, 0);
+}
+
+
+  const ctaScore = countHits(CTA_WORDS, text);
+  const urgencyScore = countHits(URGENCY_PATTERNS, text);
+  const curiosityScore = countHits(CURIOSITY_PATTERNS, text);
+
+
+  const ctaNorm = generousNormalize(ctaScore);
+  const urgencyNorm = generousNormalize(urgencyScore);
+  const curiosityNorm = generousNormalize(curiosityScore);
+
+  const nonZeroDims =
+    (ctaScore > 0 ? 1 : 0) +
+    (urgencyScore > 0 ? 1 : 0) +
+    (curiosityScore > 0 ? 1 : 0);
+
+  const baseScore =
+    ctaNorm * 0.4 + urgencyNorm * 0.3 + curiosityNorm * 0.3;
+
+  let finalScore = baseScore + dimensionBonus(nonZeroDims);
+
+  // If there is at least some “click” structure, don't be brutally low
+  const anyHit = ctaScore + urgencyScore + curiosityScore > 0;
+  if (anyHit && finalScore < 40) {
+    finalScore = 40;
   }
 
-  const ctaScore = countHits(ctaWords);
-  const urgencyScore = countHits(urgencyWords);
-  const curiosityScore = countHits(curiosityWords);
-
-  function normalize(raw) {
-    const capped = raw > 2 ? 2 : raw;
-    return (capped / 2) * 100; // 0 ->0, 1 ->50, 2+ ->100
-  }
-
-  const ctaNorm = normalize(ctaScore);
-  const urgencyNorm = normalize(urgencyScore);
-  const curiosityNorm = normalize(curiosityScore);
-
-  const finalScore = Math.round(
-    ctaNorm * 0.4 + urgencyNorm * 0.3 + curiosityNorm * 0.3
-  );
+  finalScore = clampScore(finalScore);
 
   return {
     finalScore,
@@ -149,6 +208,7 @@ function scoreForClicks(adText) {
     },
   };
 }
+
 
 function generateFeedbackClicks(result) {
   const tips = [];
@@ -190,68 +250,95 @@ Get a sale / signup
 function scoreForConversions(adText) {
   const text = adText.toLowerCase();
 
-  const benefitPatterns = [
-    "save",
-    "so you can",
-    "get results",
-    "improve",
-    "feel better",
-    "look better",
-    "faster",
-    "easier",
-    "stress-free",
-    "time-saving",
+  const BENEFIT_PATTERNS = [
+    "save time", "save money", "cut costs",
+    "grow your business", "boost results", "increase revenue",
+    "get results", "see results", "proven results",
+    "faster", "easier", "simpler",
+    "stress-free", "hassle-free",
+    "feel better", "look better", "perform better",
+    "more efficient", "high quality", "reliable",
+
+    // Regex benefits
+    /save\s+(time|money)/i,
+    /boost\s+(performance|results|sales)/i,
+    /increase\s+(sales|revenue|growth)/i,
+    /get\s+results/i,
+    /(without|no)\s+(stress|hassle)/i,
   ];
 
-  const proofPatterns = [
-    "trusted by",
-    "5-star",
-    "★★★★★",
-    "10,000+",
-    "thousands of customers",
-    "proven",
-    "award-winning",
-    "backed by experts",
-    "clinically tested",
+
+  const PROOF_PATTERNS = [
+    "trusted by", "used by", "recommended by",
+    "5-star", "five star", "★★★★★",
+    "top rated", "highly rated",
+    "award-winning", "industry-leading",
+    "proven", "testimonials", "reviews",
+    "experts agree", "backed by experts",
+
+    // Numbers & credibility
+    /\d{1,3},?\d*\+\s+(customers|users|businesses)/i,
+    /\d+\s*\+?\s*years?\s+(experience|trusted)/i,
+    /(featured|as seen)\s+in/i,
   ];
 
-  const offerPatterns = [
-    "free trial",
-    "free demo",
-    "money-back guarantee",
-    "% off",
-    "off today",
-    "discount",
-    "risk-free",
-    "no commitment",
+
+  const OFFER_PATTERNS = [
+    "free trial", "free demo", "free consultation",
+    "money-back guarantee", "satisfaction guaranteed",
+    "risk-free", "no risk",
+    "discount", "special offer", "exclusive offer",
     "limited-time offer",
+    "% off", "percent off",
+    "no commitment", "cancel anytime",
+
+    // Regex offers
+    /\d+\s*%\s*off/i,
+    /(free|complimentary)\s+(trial|demo|consultation)/i,
+    /money\s+back\s+guarantee/i,
+    /risk\s*free/i,
+    /(today|this week)\s+only/i,
   ];
 
-  function countHits(list) {
-    return list.reduce((count, phrase) => {
-      if (text.includes(phrase)) {
-        return count + 1;
+
+  function countHits(patterns, text) {
+    return patterns.reduce((count, item) => {
+      if (typeof item === "string") {
+        return text.includes(item) ? count + 1 : count;
+      }
+      if (item instanceof RegExp) {
+        return item.test(text) ? count + 1 : count;
       }
       return count;
     }, 0);
   }
 
-  const benefitScore = countHits(benefitPatterns);
-  const proofScore = countHits(proofPatterns);
-  const offerScore = countHits(offerPatterns);
 
-  function normalize(raw) {
-    const capped = raw > 2 ? 2 : raw;
-    return (capped / 2) * 100;
+  const benefitScore = countHits(BENEFIT_PATTERNS, text);
+  const proofScore = countHits(PROOF_PATTERNS, text);
+  const offerScore = countHits(OFFER_PATTERNS, text);
+
+  const benefitNorm = generousNormalize(benefitScore);
+  const proofNorm = generousNormalize(proofScore);
+  const offerNorm = generousNormalize(offerScore);
+
+  const nonZeroDims =
+    (benefitScore > 0 ? 1 : 0) +
+    (proofScore > 0 ? 1 : 0) +
+    (offerScore > 0 ? 1 : 0);
+
+  const baseScore =
+    offerNorm * 0.4 + proofNorm * 0.3 + benefitNorm * 0.3;
+
+  let finalScore = baseScore + dimensionBonus(nonZeroDims);
+
+  // If it at least looks like a legit conversion ad, be less harsh
+  const anyHit = benefitScore + proofScore + offerScore > 0;
+  if (anyHit && finalScore < 45) {
+    finalScore = 45;
   }
 
-  const benefitNorm = normalize(benefitScore);
-  const proofNorm = normalize(proofScore);
-  const offerNorm = normalize(offerScore);
-
-  const finalScore = Math.round(
-    offerNorm * 0.4 + proofNorm * 0.3 + benefitNorm * 0.3
-  );
+  finalScore = clampScore(finalScore);
 
   return {
     finalScore,
@@ -267,6 +354,7 @@ function scoreForConversions(adText) {
     },
   };
 }
+
 
 function generateFeedbackConversions(result) {
   const tips = [];
@@ -308,68 +396,87 @@ Brand voice / memorability
 function scoreForAwareness(adText) {
   const text = adText.toLowerCase();
 
-  const brandingPatterns = [
-    "we are",
-    "we're",
-    "our mission",
-    "our vision",
-    "introducing",
-    "the new",
-    "official",
-    "experience",
-    "this is us",
+  const BRANDING_PATTERNS = [
+    "we are", "we're", "our mission", "our vision",
+    "who we are", "what we stand for",
+    "introducing", "meet the", "this is",
+    "official launch", "from the makers of",
+    "built for", "designed for",
+    "the future of",
+
+    // Regex
+    /(our|the)\s+(mission|vision|story)/i,
+    /(introducing|meet)\s+the/i,
   ];
 
-  const emotionalWords = [
-    "premium",
-    "luxury",
-    "bold",
-    "fearless",
-    "unforgettable",
-    "iconic",
-    "elevate",
-    "next-level",
-    "redefining",
-    "exclusive",
+  const EMOTIONAL_PATTERNS = [
+    "premium", "luxury", "exclusive",
+    "bold", "fearless", "confident",
+    "unforgettable", "iconic",
+    "authentic", "timeless", "modern",
+    "next-level", "redefining",
+    "elevated", "powerful", "beautiful",
+
+    // Regex emotion
+    /(next|new)\s+level/i,
+    /redefining\s+the/i,
+    /crafted\s+for/i,
   ];
 
-  function countHits(list) {
-    return list.reduce((count, phrase) => {
-      if (text.includes(phrase)) {
-        return count + 1;
+
+  function countHits(patterns, text) {
+    return patterns.reduce((count, item) => {
+      if (typeof item === "string") {
+        return text.includes(item) ? count + 1 : count;
+      }
+      if (item instanceof RegExp) {
+        return item.test(text) ? count + 1 : count;
       }
       return count;
     }, 0);
   }
 
-  const brandingScore = countHits(brandingPatterns);
-  const emotionalScore = countHits(emotionalWords);
+
+  const brandingScore = countHits(BRANDING_PATTERNS, text);
+  const emotionalScore = countHits(EMOTIONAL_PATTERNS, text);
 
   const wordCount = adText
     .trim()
     .split(/\s+/)
     .filter((w) => w.length > 0).length;
 
+  // Softer, more realistic simplicity rule
   let simplicityNorm;
-  if (wordCount <= 15) {
-    simplicityNorm = 100;
-  } else if (wordCount <= 30) {
-    simplicityNorm = 50;
+  if (wordCount <= 20) {
+    simplicityNorm = 100;     // punchy
+  } else if (wordCount <= 40) {
+    simplicityNorm = 75;      // still fine
+  } else if (wordCount <= 60) {
+    simplicityNorm = 50;      // a bit long, but okay
   } else {
-    simplicityNorm = 0;
+    simplicityNorm = 30;      // long, but not auto-zero
   }
 
-  function normalize(raw) {
-    const capped = raw > 2 ? 2 : raw;
-    return (capped / 2) * 100;
+  const brandingNorm = generousNormalize(brandingScore);
+  const emotionalNorm = generousNormalize(emotionalScore);
+
+  const nonZeroDims =
+    (brandingScore > 0 ? 1 : 0) +
+    (emotionalScore > 0 ? 1 : 0);
+
+  const baseScore =
+    brandingNorm * 0.4 +
+    emotionalNorm * 0.3 +
+    simplicityNorm * 0.3;
+
+  let finalScore = baseScore + dimensionBonus(nonZeroDims);
+
+  const anyHit = brandingScore + emotionalScore > 0;
+  if (anyHit && finalScore < 40) {
+    finalScore = 40;
   }
 
-  const brandingNorm = normalize(brandingScore);
-  const emotionalNorm = normalize(emotionalScore);
-
-  const finalScore = Math.round(
-    brandingNorm * 0.4 + emotionalNorm * 0.3 + simplicityNorm * 0.3
-  );
+  finalScore = clampScore(finalScore);
 
   return {
     finalScore,
@@ -385,6 +492,7 @@ function scoreForAwareness(adText) {
     },
   };
 }
+
 
 function generateFeedbackAwareness(result) {
   const tips = [];
@@ -416,47 +524,6 @@ function generateFeedbackAwareness(result) {
   return tips;
 }
 
-const imgSignals = {
-  hasPerson: false,
-  hasProduct: false,
-  hasOfferText: false
-};
-
-
-function analyzeImageForGoal(goal, imgSignals = {}) {
-  const { hasPerson, hasProduct, hasOfferText } = imgSignals || {};
-
-  if (goal === "awareness") {
-    if (hasPerson && !hasOfferText) {
-      return "Good for awareness: showing a real person helps create emotional connection. The image isn't cluttered with promo text, so the brand vibe is clear.";
-    }
-    if (!hasPerson) {
-      return "For awareness, consider using a human or lifestyle shot. Faces and emotion help people remember the brand.";
-    }
-    return "Image is okay for awareness. Keep it clean, bold, and identity-focused instead of feeling like a coupon.";
-  }
-
-  if (goal === "clicks") {
-    if (hasOfferText) {
-      return "Great for clicks: bold promo text on the image grabs attention fast and can boost tap-through.";
-    }
-    return "To drive clicks, consider putting short bold text directly on the image (like 'FREE TRIAL TODAY'). That kind of visual hook stops the scroll.";
-  }
-
-  if (goal === "conversions") {
-    if (hasProduct && hasOfferText) {
-      return "Strong for conversions: the image shows the product and a clear offer. This helps people understand what they're buying and why to act now.";
-    }
-    if (!hasProduct) {
-      return "For conversions, show the actual product or result in the image so buyers know what they're getting.";
-    }
-    if (!hasOfferText) {
-      return "Consider adding a clear offer stamp on the image (e.g. '20% Off — Today Only'). That visual nudge can push last-second signups.";
-    }
-  }
-
-  return "No image signals provided. (Optional: tell us if the image shows a person, the product, or promo text and we’ll evaluate it.)";
-}
 
 /*
 ====================================================
@@ -497,7 +564,7 @@ Return ONLY valid JSON:
       {
         role: "system",
         content:
-          "You are a brutally honest performance marketing strategist. Be direct, practical, and conversion-minded.",
+          "You are a honest performance marketing strategist. Be direct, practical, and conversion-minded.",
       },
       { role: "user", content: prompt },
     ],
@@ -520,6 +587,83 @@ Return ONLY valid JSON:
   }
 }
 
+async function generateLLMScore({ adText, goal }) {
+  const prompt = `
+You are an expert performance marketer evaluating ads.
+
+Your job:
+- Evaluate the ad text for the specified GOAL.
+- Give an overall score from 0 to 100 (0 = terrible, 100 = world-class).
+- Give a breakdown of 3 sub-dimensions as 0–100 scores.
+
+GOAL: ${goal}
+AD_TEXT: """${adText}"""
+
+Use these breakdown keys depending on the goal:
+
+- If GOAL is "clicks":
+  - CTA
+  - Urgency
+  - Curiosity
+
+- If GOAL is "conversions":
+  - Offer / Incentive
+  - Benefit / Clarity
+  - Social Proof / Trust
+
+- If GOAL is "awareness":
+  - Brand / Clarity / Identity
+  - Emotional Impact / Tone
+  - Memorability / Simplicity
+
+Guidelines:
+- Be realistic but slightly generous. A decent ad should usually be between 60 and 85.
+- Consider meaning and tone, not just specific buzzwords or exact phrases.
+- If the style is unusual but clearly strong for the goal, score it fairly.
+
+Return ONLY valid JSON like:
+{
+  "finalScore": number,
+  "breakdown": {
+    // 3 keys depending on GOAL, each 0-100
+  }
+}
+`.trim();
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0.3,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a precise performance marketing rater. Always answer with strict JSON only, no extra text.",
+      },
+      { role: "user", content: prompt },
+    ],
+  });
+
+  const raw = completion.choices?.[0]?.message?.content || "";
+
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      finalScore: typeof parsed.finalScore === "number" ? parsed.finalScore : 0,
+      breakdown: typeof parsed.breakdown === "object" ? parsed.breakdown : {},
+      _raw: raw,
+    };
+  } catch (err) {
+    // If JSON parsing fails, fail gracefully
+    console.error("generateLLMScore JSON parse error:", err, raw);
+    return {
+      finalScore: 0,
+      breakdown: {},
+      _raw: raw,
+    };
+  }
+}
+
+
 /*
 ====================================================
 ROUTES
@@ -530,6 +674,7 @@ app.get("/", (req, res) => {
   res.json({ message: "Ad Analyzer backend is running ✅" });
 });
 
+// IMPORTANT: this route is async because we call the LLM
 // IMPORTANT: this route is async because we call the LLM
 app.post("/analyzeAd", upload.single("imageFile"), async (req, res, next) => {
   try {
@@ -546,11 +691,10 @@ app.post("/analyzeAd", upload.single("imageFile"), async (req, res, next) => {
       console.log("🟩 Starting OCR...");
       try {
         ocrText = await extractTextFromImage(
-        req.file.buffer,
-        req.file.mimetype,
-        req.file.originalname     // <-- send filename too
-      );
-
+          req.file.buffer,
+          req.file.mimetype,
+          req.file.originalname // <-- send filename too
+        );
         console.log("🟩 OCR TEXT RESULT:", ocrText);
       } catch (err) {
         console.error("🔥 OCR ERROR:", err);
@@ -565,46 +709,85 @@ app.post("/analyzeAd", upload.single("imageFile"), async (req, res, next) => {
 
     const goal = req.body.goal;
 
-    // 3️⃣ Run your scoring engines using fullAdText
-    let result;
-    let suggestions;
-
+    // 3️⃣ Local rule-based scoring (still part of the project, not just OpenAI)
+    let localResult;
     if (goal === "clicks") {
-      result = scoreForClicks(fullAdText);
-      suggestions = generateFeedbackClicks(result);
+      localResult = scoreForClicks(fullAdText);
     } else if (goal === "conversions") {
-      result = scoreForConversions(fullAdText);
-      suggestions = generateFeedbackConversions(result);
+      localResult = scoreForConversions(fullAdText);
     } else if (goal === "awareness") {
-      result = scoreForAwareness(fullAdText);
-      suggestions = generateFeedbackAwareness(result);
+      localResult = scoreForAwareness(fullAdText);
     } else {
-      return res.json({ error: "Invalid goal" });
+      localResult = {
+        finalScore: 0,
+        breakdown: {},
+        details: {},
+      };
     }
 
-    // 4️⃣ Call the LLM using fullAdText
-    let llmSummary = await generateLLMAnalysis({
+    // 4️⃣ AI-based scoring (semantic, bigger “word pool”)
+    const aiResult = await generateLLMScore({
       adText: fullAdText,
       goal,
-      score: result.finalScore,
-      breakdown: result.breakdown
+    });
+    // aiResult: { finalScore, breakdown }
+
+    // 5️⃣ Blend local + AI so you’re not fully relying on OpenAI
+    const blendedScore = Math.round(
+      (aiResult.finalScore || 0) * 0.9 +
+      (localResult.finalScore || 0) * 0.1
+    );
+
+    const blendedBreakdown =
+      aiResult.breakdown && Object.keys(aiResult.breakdown).length > 0
+        ? aiResult.breakdown
+        : localResult.breakdown || {};
+
+    // 6️⃣ Generate human-friendly suggestions from your local logic
+    let suggestions = [];
+    if (goal === "clicks") {
+      suggestions = generateFeedbackClicks(localResult);
+    } else if (goal === "conversions") {
+      suggestions = generateFeedbackConversions(localResult);
+    } else if (goal === "awareness") {
+      suggestions = generateFeedbackAwareness(localResult);
+    }
+
+    // 7️⃣ Call LLM for deeper analysis + rewrite, using blended score
+    const llmSummary = await generateLLMAnalysis({
+      adText: fullAdText,
+      goal,
+      score: blendedScore,
+      breakdown: blendedBreakdown,
     });
 
-    // 5️⃣ Respond
+    // 8️⃣ Respond
     res.json({
       goalAnalyzed: goal,
-      score: result.finalScore,
-      breakdown: result.breakdown,
+
+      // final numbers you actually show
+      score: blendedScore,
+      breakdown: blendedBreakdown,
+
+      // debugging / transparency (you can hide these in UI if you want)
+      localScore: localResult.finalScore,
+      localBreakdown: localResult.breakdown,
+      aiScore: aiResult.finalScore,
+      aiBreakdown: aiResult.breakdown,
+
+      // AI commentary
       aiSummary: llmSummary.aiSummary,
       rewrite: llmSummary.rewrite,
-      ocrText,
-      suggestions
-    });
 
+      // OCR + rule-based suggestions
+      ocrText,
+      suggestions,
+    });
   } catch (err) {
     next(err);
   }
 });
+
 
 
 /*
