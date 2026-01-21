@@ -7,7 +7,7 @@ An AI-powered ad analysis tool that evaluates marketing ads using **OCR (Optical
 ## Screenshots
 
 <img src="images/home.png" width="100%">
-<br><b align="center">Starting Page</b>
+<p align="center"><b>Starting Page</b></p>
 <br><br>
 
 <table>
