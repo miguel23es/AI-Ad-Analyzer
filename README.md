@@ -4,6 +4,32 @@ An AI-powered ad analysis tool that evaluates marketing ads using **OCR (Optical
 
 ---
 
+## Screenshots
+
+<img src="images/home.png" width="100%">
+<br><br>
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="images/score_text.png" width="100%">
+      <br><b>Text Analysis Score</b>
+      <br><br>
+      <img src="images/score_text2.png" width="100%">
+      <br><b>Detailed Text Breakdown</b>
+    </td>
+    <td align="center">
+      <img src="images/score_img.png" width="100%">
+      <br><b>Image Analysis Score</b>
+      <br><br>
+      <img src="images/score_img2.png" width="100%">
+      <br><b>Image Insights</b>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## 🌐 Live Website  
 https://ai-ad-analyzer.onrender.com
 
